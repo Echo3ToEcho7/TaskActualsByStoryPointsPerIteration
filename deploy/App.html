@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TaskActualsVsPointsPerIterationChart</title>
+
+    <script type="text/javascript" src="/apps/2.0rc1/sdk-debug.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/jquery/1.9.1/jquery.min.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/highcharts/3.0.2/highcharts.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/highcharts/3.0.2/highcharts-more.js"></script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/highcharts/3.0.2/modules/exporting.js"></script>
+
+    <script type="text/javascript">
+        Rally.onReady(function() {
+            var Ext = window.Ext4 || window.Ext;
+            var Lumenize = window.parent.Rally.data.lookback.Lumenize;
+            
+            Ext.define("Calculator.TaskActualsVsPoints", {
+              extend: "Rally.data.lookback.calculator.BaseCalculator",
+            
+              iterations: null,
+            
+              constructor: function ctor(config) {
+                this.callParent(arguments);
+            
+                Ext.apply(this, config);
+              },
+            
+              prepareChartData: function prepareChartData(store) {
+                var snapshots = store.data.items;
+                var ret;
+            
+                console.log(store, this.iterations);
+                console.log("Snapshot Data");
+                console.log(snapshots);
+            
+                ret = this.runCalculation(snapshots);
+            
+                return ret;
+              },
+            
+              runCalculation: function runCalculator(snapshots) {
+                var me = this;
+                var seriesData = {};
+                var iterationOrder = [];
+                var discoveredPoints = {};
+                var pointsOrder = [];
+                var i, ii, j, jj, it, p;
+                var p2, p25, p50, p75, p98;
+                var chartData = [];
+            
+                for (it in me.iterations) {
+                  if (me.iterations.hasOwnProperty(it)) {
+                    iterationOrder.push([me.iterations[it].Name, me.iterations[it].Start]);
+                  }
+                }
+            
+                iterationOrder.sort(function (a, b) {
+                  if (a[1] < b[1]) return -1;
+                  if (a[1] > b[1]) return 1;
+                  return 0;
+                });
+                console.log("Iteration Order", iterationOrder);
+            
+                Ext.each(snapshots, function (item) {
+                  if (isNaN(parseInt(item.get("Iteration") + "", 10)) || isNaN(parseInt(item.get("PlanEstimate") + "", 10))) {
+                    return;
+                  }
+            
+                  var iid = me.iterations[parseInt(item.get("Iteration") + "", 10)].Name;
+                  var pe = parseInt(item.get("PlanEstimate") + "", 10);
+            
+                  if (!seriesData.hasOwnProperty(iid)) {
+                    seriesData[iid] = {};
+                  }
+            
+                  if (!seriesData[iid].hasOwnProperty(pe)) {
+                    seriesData[iid][pe] = [];
+                  }
+            
+                  seriesData[iid][pe].push(item.get("TaskActualTotal"));
+                  discoveredPoints[pe] = 1;
+                });
+                console.log("Series Data", seriesData);
+            
+                Ext.each(Ext.Object.getKeys(discoveredPoints), function (item) {
+                  pointsOrder.push(parseInt(item + "", 10));
+                });
+            
+                pointsOrder.sort(function (a, b) {
+                  if (a < b) return -1;
+                  if (a > b) return 1;
+                  return 0;
+                });
+                console.log("Points Order", pointsOrder);
+            
+                p2  = Lumenize.functions.percentileCreator(2);
+                p25 = Lumenize.functions.percentileCreator(25);
+                p50 = Lumenize.functions.percentileCreator(50);
+                p75 = Lumenize.functions.percentileCreator(75);
+                p98 = Lumenize.functions.percentileCreator(98);
+            
+                for (i = 0, ii = pointsOrder.length; i < ii; i++) {
+                  var dataset;
+                  var data = {
+                    name: pointsOrder[i] + " Point Stories",
+                    type: "boxplot",
+                    data: []
+                  };
+            
+                  //debugger;
+                  for (j = 0, jj = iterationOrder.length; j < jj; j++) {
+                    console.log(iterationOrder[j][0], pointsOrder[i]);
+            
+                    if (!seriesData.hasOwnProperty(iterationOrder[j][0])) {
+                      console.log("Doesn't have this iteration");
+                      data.data.push([0, 0, 0, 0, 0]);
+                      continue;
+                    }
+            
+                    if (!seriesData[iterationOrder[j][0]].hasOwnProperty(pointsOrder[i])) {
+                      console.log("Doesn't have this point value");
+                      data.data.push([0, 0, 0, 0, 0]);
+                      continue;
+                    }
+            
+                    dataset = seriesData[iterationOrder[j][0]][pointsOrder[i]];
+                    if (!dataset.length) {
+                      console.log("No dataset");
+                      data.data.push([0, 0, 0, 0, 0]);
+                      continue;
+                    }
+            
+                    //data.data.push([[j, p2(dataset)], [j, p25(dataset)], [j, p50(dataset)], [j, p75(dataset)], [j, p98(dataset)]]);
+                    data.data.push([p2(dataset), p25(dataset), p50(dataset), p75(dataset), p98(dataset)]);
+                  }
+            
+                  chartData.push(data);
+                }
+            
+                var iterations = [];
+                Ext.each(iterationOrder, function (item) {
+                  iterations.push(item[0]);
+                });
+            
+                console.log("Chart Data");
+                console.dir(chartData);
+                console.log("Categories");
+                console.dir(iterations);
+            
+                return {
+                  series: chartData,
+                  categories: iterations
+                };
+              }
+            });
+            var Ext = window.Ext4 || window.Ext;
+            
+            Ext.define('CustomApp', {
+              extend: 'Rally.app.App',
+              componentCls: 'app',
+            
+              launch: function() {
+                var me = this;
+            
+                me.addEvents(
+                  "iterationDataLoaded",
+                  "iterationDataReady"
+                );
+            
+                me.on("iterationDataLoaded", Ext.bind(me._processIterationData, me));
+                me.on("iterationDataReady", Ext.bind(me._renderChart, me));
+            
+                me.createChart();
+              },
+            
+              createChart: function createChart() {
+                var me = this;
+            
+                me.dataLoaded = false;
+            
+                me._loadIterationData();
+              },
+            
+              _loadIterationData: function _loadIterationData() {
+                var me = this;
+            
+                var iterationStore = Ext.create("Rally.data.WsapiDataStore", {
+                  model: "Iteration",
+                  filters: [
+                    {
+                      property: "StartDate",
+                      operator: ">=",
+                      value: Rally.util.DateTime.toIsoString(Ext.Date.add(new Date(), Ext.Date.DAY, -140))
+                    },
+                    {
+                      property: "EndDate",
+                      operator: "<=",
+                      value: Rally.util.DateTime.toIsoString(new Date())
+                    }
+                  ]
+                });
+            
+                iterationStore.load({
+                  callback: function (records) {
+                    me.fireEvent("iterationDataLoaded", records, iterationStore);
+                  }
+                });
+              },
+            
+              _processIterationData: function _processIterationData(records, iterationStore) {
+                var me = this;
+                var imap = {};
+            
+                me.iterationStore = iterationStore;
+            
+                Ext.each(records, function(rec) {
+                  imap[parseInt(rec.get("ObjectID") + "", 10)] = { 
+                    Name: rec.get("Name"),
+                    Start: rec.get("StartDate"),
+                    End: rec.get("EndDate")
+                  };
+                });
+            
+                console.log("Iteration Map", imap);
+                me.fireEvent("iterationDataReady", imap);
+              },
+            
+              _renderChart: function _renderChart(iterationMap) {
+                var me = this;
+                var pois = [];
+                var iids = [];
+            
+                Ext.each("__PROJECT_OIDS_IN_SCOPE__".split(","), function (item) {
+                  pois.push(parseInt(item + "", 10));
+                });
+            
+                Ext.each(Ext.Object.getKeys(iterationMap), function (item) {
+                  iids.push(parseInt(item + "", 10));
+                });
+            
+                //pois = [9061887907];
+            
+            
+                //console.log(chartData);
+                //var chart = Ext.create("Rally.ui.chart.Chart", {
+                  //calculatorType: "Calculator.TaskActualsVsPoints",
+                  //storeType: "Rally.data.lookback.SnapshotStore",
+            
+                  //chartConfig: chartConfig,
+                  //calculatorConfig: {
+                    //iterations: iterationMap
+                  //},
+                  //storeConfig: {
+                    //find: {
+                      //_TypeHierarchy: { $in: ['HierarchicalRequirement', 'Defect'] },
+                      //_ProjectHierarchy: { $in: pois },
+                      //ScheduleState: { $gte: "Accepted" },
+                      //TaskActualTotal: { $gte: 0 },
+                      //Iteration: { $in: iids },
+                      //__At: new Date()
+                    //},
+                    //fetch: ["TaskActualTotal", "PlanEstimate", "Iteration"]
+                  //}
+                //});
+            
+                //this.add(chart);
+            
+                var sstore = Ext.create("Rally.data.lookback.SnapshotStore", {
+                  find: {
+                    _TypeHierarchy: { $in: ['HierarchicalRequirement', 'Defect'] },
+                    _ProjectHierarchy: { $in: pois },
+                    ScheduleState: { $gte: "Accepted" },
+                    TaskActualTotal: { $gte: 0 },
+                    Iteration: { $in: iids },
+                    __At: new Date()
+                  },
+                  fetch: ["TaskActualTotal", "PlanEstimate", "Iteration"],
+                });
+            
+                sstore.load({
+                    callback: function (records) {
+                      console.log("Iteration Map", iterationMap);
+                      var calc = Ext.create("Calculator.TaskActualsVsPoints", {
+                        iterations: iterationMap
+                      });
+            
+                      var chartData = calc.prepareChartData(sstore);
+            
+                      var chartConfig = {
+                        chart: {
+                          renderTo: "chart",
+                          type: "boxplot"
+                        },
+                        title: {
+                          text: "Task Actuals per Iteration by Story Point Estimate"
+                        },
+                        ledgend: {
+                          enabled: true
+                        },
+                        xAxis: {
+                          categories: chartData.categories,
+                          title: {
+                            text: "Iterations"
+                          }
+                        },
+                        yAxis: {
+                          title: {
+                            text: "Task Actuals (h)"
+                          }
+                        },
+                        series: chartData.series
+                      };
+            
+                      me.add({
+                        xtype: "box",
+                        id: "chart"
+                      });
+            
+                      $("#chart").highcharts(chartConfig);
+                    }
+                });
+              }
+            });
+
+            Rally.launchApp('CustomApp', {
+                name: 'TaskActualsVsPointsPerIterationChart'
+            });
+        });
+    </script>
+
+    <style type="text/css">
+        .app {
+             /* Add app styles here */
+        }
+    </style>
+</head>
+<body></body>
+</html>
